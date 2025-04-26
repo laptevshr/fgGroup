@@ -329,19 +329,26 @@ class fwCode:
                 # Закрытие любого блока
                 if '}' in line:
                     if current_group:
-                        for fw in self.current_fws:
-                            if fw not in self.groups: self.groups[fw] = {}
-                            self.groups[fw][current_group['name']] = current_group['members']
+                        # ... (сохранение группы адресов) ...
                         current_group = None
-                    elif current_service_group:
+                    elif current_service_group:  # <--- ВОТ ЭТОТ БЛОК
+                        # !!! НОВЫЙ ОТЛАДОЧНЫЙ ВЫВОД !!!
+                        print(
+                            f"--- DEBUG: Saving Service Group: Name='{current_service_group['name']}', Members={current_service_group['members']}, FWs={self.current_fws} ---")
+                        # !!! КОНЕЦ НОВОГО ВЫВОДА !!!
+
+                        # Цикл по текущим фаерволам
                         for fw in self.current_fws:
-                            if fw not in self.service_groups: self.service_groups[fw] = {}
-                            self.service_groups[fw][current_service_group['name']] = current_service_group['members']
+                            # Если для этого FW еще нет записей о сервисных группах, создаем пустой словарь
+                            if fw not in self.service_groups:
+                                self.service_groups[fw] = {}
+                            # Сохраняем членов группы по имени группы для данного FW
+                            self.service_groups[fw][current_service_group['name']] = current_service_group[
+                                'members']
+                        # Сбрасываем состояние парсинга сервисной группы
                         current_service_group = None
                     elif current_policy:
-                        for fw in self.current_fws:
-                            if fw not in self.policies: self.policies[fw] = []
-                            self.policies[fw].append(current_policy)
+                        # ... (сохранение политики) ...
                         current_policy = None
                     continue  # Переходим к следующей строке после закрытия блока
 
