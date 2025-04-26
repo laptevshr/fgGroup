@@ -1,0 +1,366 @@
+{% extends "base.html" %}
+
+{% block title %}Редактор кода{% endblock %}
+
+{% block content %}
+<h2>Редактор кода для правил FortiGate</h2>
+<p>Создавайте и проверяйте правила для межсетевых экранов</p>
+
+<!-- Блок с информацией о firewalls -->
+<div class="row mt-4">
+    {% for fw in firewalls %}
+    <div class="col-md-4 mb-3">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-shield-lock"></i> {{ fw.name }}
+            </div>
+            <div class="card-body">
+                <p class="card-text">{{ fw.description }}</p>
+                <p class="card-text"><small class="text-muted">IP: {{ fw.ipv4 }}</small></p>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Блок с примерами кода -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-code-slash"></i> Примеры правил
+            </div>
+            <div class="card-body">
+                <pre class="bg-light p-3 rounded">
+# Правила всегда создаются разрешающими и выключенными
+# Пример правила
+# Пример матрицы доступа
+
+Set SAR2-NGFW-VDOM_GLOBAL # Применяем к МЭ пользовательскому
+
+Group ALT_TEST {
+	8.8.8.8/32
+}
+
+Group ext_grp_banki {
+	sbrf.ru
+	alfa.ru
+	tinkoff.ru
+	78.43.23.54/32
+	192.168.88.3/32
+	ext_grp_dns
+}
+
+Policy msk1_ws01_2_google.com {
+	src=msk1_ws01.interrao.ru
+	src=192.168.100.24/32
+	src=10.132.10.0/24
+	dst=google.com
+	dst=ext_grp_banki
+	svc=https
+	svc=http
+	sec=base
+	after=584
+}
+
+Set SAR2_NGFW-VDOM_LAN # Применяем к МЭ серверному
+
+Group ext_grp_avpo {
+	kaspersky.ru
+	nod32.com
+	avast.com
+	8.3.6.2/32
+}
+                </pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Блок редактора кода -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-pencil-square"></i> Редактор кода
+            </div>
+            <div class="card-body">
+                <form id="codeForm" method="POST">
+                    <div class="position-relative d-flex">
+                        <div id="lineNumbers" style="width: 40px; background: #f8f9fa; border-right: 1px solid #dee2e6; text-align: right; padding: 8px 5px; color: #6c757d; font-family: monospace; flex-shrink: 0;"></div>
+                        <div id="codeEditor" contenteditable="true" class="form-control" style="font-family: monospace; flex-grow: 1; margin: 0; padding: 8px; min-height: 200px; overflow: auto; white-space: pre-wrap;"></div>
+                        <input type="hidden" id="codeInput" name="code">
+                    </div>
+                </form>
+                <div class="d-flex gap-2 mt-3">
+                    <button type="button" id="reviewButton" class="btn btn-primary">Review</button>
+                    <button type="submit" id="acceptButton" class="btn btn-success" disabled>Accept</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- Блок обработанного кода -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-pencil-square"></i> Обработанный код
+            </div>
+            <div class="card-body">
+                <pre id="processedCode" class="bg-light p-3 rounded" style="min-height: 200px;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Добавленный блок для отображения отчета -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-list-check"></i> План применения
+            </div>
+            <div class="card-body">
+                <pre id="configReport" class="bg-light p-3 rounded" style="white-space: pre-wrap;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+<script>
+// Состояние редактора
+let isHighlighting = false;
+let lastCursorPosition = 0;
+
+// Функция для обновления нумерации строк
+function updateLineNumbers() {
+    const editor = document.getElementById('codeEditor');
+    const lineNumbers = document.getElementById('lineNumbers');
+    const lines = editor.innerText.split('\n').length;
+    let lineNumbersHtml = '';
+    for (let i = 1; i <= lines; i++) {
+        lineNumbersHtml += i + '<br>';
+    }
+    lineNumbers.innerHTML = lineNumbersHtml;
+}
+
+// Функция для получения чистого текста из редактора
+function getPlainText() {
+    const editor = document.getElementById('codeEditor');
+    return editor.innerText;
+}
+
+// Функция для сохранения позиции курсора
+function saveCursorPosition() {
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        const preCaretRange = range.cloneRange();
+        preCaretRange.selectNodeContents(document.getElementById('codeEditor'));
+        preCaretRange.setEnd(range.endContainer, range.endOffset);
+        lastCursorPosition = preCaretRange.toString().length;
+    }
+}
+
+// Функция для восстановления позиции курсора
+function restoreCursorPosition() {
+    const editor = document.getElementById('codeEditor');
+    const selection = window.getSelection();
+    const range = document.createRange();
+
+    let charCount = 0;
+    let foundNode = null;
+    let foundOffset = 0;
+
+    function traverse(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            const nextCharCount = charCount + node.length;
+            if (!foundNode && nextCharCount >= lastCursorPosition) {
+                foundNode = node;
+                foundOffset = lastCursorPosition - charCount;
+                return true;
+            }
+            charCount = nextCharCount;
+        } else {
+            for (let i = 0; i < node.childNodes.length; i++) {
+                if (traverse(node.childNodes[i])) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    traverse(editor);
+
+    if (foundNode) {
+        range.setStart(foundNode, foundOffset);
+        range.setEnd(foundNode, foundOffset);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    } else {
+        // Если не нашли позицию, ставим курсор в конец
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+}
+
+// Функция для подсветки синтаксиса
+function highlightSyntax() {
+    if (isHighlighting) return;
+    isHighlighting = true;
+
+    saveCursorPosition();
+
+    const editor = document.getElementById('codeEditor');
+    let text = editor.innerText;
+
+    // Экранируем HTML-символы
+    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Применяем подсветку
+    let highlighted = text
+        .replace(/^(#.*)$/gm, '<span style="color: #6c757d; font-style: italic;">$1</span>')
+        .replace(/\b(Set|Policy|Group|Service)\b/gi, '<span style="color: #0d6efd; font-weight: bold;">$1</span>')
+        .replace(/\b(FW)\b/gi, '<span style="color: red; font-weight: bold;">$1</span>')
+        .replace(/\b(sec)\b/gi, '<span style="color: #dc3545;">$1</span>')
+        .replace(/\b(svc)\b/gi, '<span style="color: #6f42c1;">$1</span>')
+        .replace(/\b(src|dst)\b/gi, '<span style="color: #198754; font-weight: bold;">$1</span>')
+        .replace(/(\{|\})/g, '<span style="color: #6c757d; background-color: #f8f9fa;">$1</span>');
+
+    editor.innerHTML = highlighted;
+
+    restoreCursorPosition();
+    isHighlighting = false;
+}
+
+// Обработчик ввода в редакторе
+document.getElementById('codeEditor').addEventListener('input', function() {
+    updateLineNumbers();
+    highlightSyntax();
+});
+
+// Обработчик клавиш для обработки Enter
+document.getElementById('codeEditor').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+
+        // Сохраняем текущее выделение
+        const selection = window.getSelection();
+        if (selection.rangeCount === 0) return;
+        const range = selection.getRangeAt(0);
+
+        // Создаем текстовый узел с переводом строки
+        const newNode = document.createTextNode('\n');
+
+        // Вставляем перевод строки
+        range.deleteContents();
+        range.insertNode(newNode);
+
+        // Устанавливаем курсор после вставленного перевода строки
+        const newRange = document.createRange();
+        newRange.setStartAfter(newNode);
+        newRange.setEndAfter(newNode);
+
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+
+        // Обновляем нумерацию и подсветку
+        updateLineNumbers();
+        highlightSyntax();
+
+        // Прокручиваем редактор, если курсор ушел за край видимой области
+        this.scrollTop = this.scrollHeight;
+    }
+});
+
+// Обработчик скролла для синхронизации номеров строк
+document.getElementById('codeEditor').addEventListener('scroll', function() {
+    document.getElementById('lineNumbers').scrollTop = this.scrollTop;
+});
+
+// Обновление скрытого поля перед отправкой формы
+document.getElementById('codeForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    document.getElementById('codeInput').value = getPlainText();
+    // Здесь можно добавить отправку формы
+});
+
+// Инициализация при загрузке
+document.addEventListener('DOMContentLoaded', function() {
+    // Устанавливаем начальное содержимое
+    const editor = document.getElementById('codeEditor');
+    editor.innerHTML = '# Введите ваш код здесь\nPolicy name "Example" {\n    src \n    dst \n    svc \n    sec \n}';
+    updateLineNumbers();
+    highlightSyntax();
+});
+
+// Обработчик кнопки Review
+document.getElementById('reviewButton').addEventListener('click', function() {
+    const code = getPlainText();
+    const reviewButton = this;
+
+    reviewButton.disabled = true;
+    reviewButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Проверка...';
+
+    axios.post('/code_review', { code: code })
+        .then(response => {
+            console.log('Ответ сервера:', response.data);
+
+            const reportElement = document.getElementById('configReport');
+            if (response.data.success) {
+                // Форматирование текста с переносами строк
+                reportElement.innerHTML = response.data.report.replace(/\n/g, '<br>');
+                document.getElementById('acceptButton').disabled = false;
+            } else {
+                reportElement.innerHTML = `<span class="text-danger">${response.data.message}</span>`;
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка:', error);
+            document.getElementById('configReport').innerHTML =
+                '<span class="text-danger">Ошибка соединения с сервером</span>';
+        })
+        .finally(() => {
+            reviewButton.disabled = false;
+            reviewButton.innerHTML = 'Review';
+        });
+});
+// Обработчик кнопки Accept
+document.getElementById('acceptButton').addEventListener('click', function() {
+    const code = getPlainText();
+    const acceptButton = this;
+
+    if (!confirm('Применить конфигурацию на FortiGate?')) return;
+
+    acceptButton.disabled = true;
+    acceptButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Применение...';
+
+    // Отправляем код напрямую, без использования сессии
+    axios.post('/apply_code', { code: code })
+        .then(response => {
+            if (response.data.success) {
+                alert('Конфигурация успешно применена!');
+            } else {
+                alert('Ошибка: ' + response.data.message);
+            }
+        })
+        .catch(error => {
+            alert('Ошибка соединения: ' + error.message);
+        })
+        .finally(() => {
+            acceptButton.disabled = false;
+            acceptButton.innerHTML = 'Accept';
+        });
+});
+</script>
+{% endblock %}
