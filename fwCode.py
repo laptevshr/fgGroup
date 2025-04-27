@@ -251,26 +251,31 @@ class fwCode:
 
         return {'output': output, 'variables': variables}
 
-
-
-
     def extract_configuration(self):
         self.current_fws = []
         self.addresses = {}
         self.groups = {}
         self.policies = {}
-        self.service_groups = {}
+        self.service_groups = {}  # Словарь для сервисных групп
+        self.services = {}  # Словарь для отдельных сервисов
+        self.referenced_groups = set()  # Новый набор для отслеживания упомянутых групп
 
         current_group = None
         current_policy = None
         current_service_group = None
 
-        # Анализ групп портов >>>
-        port_group_pattern = re.compile(r'^\s*svc\s*\{', re.IGNORECASE)
-        in_port_group = False
-        current_port_group = []
-        # Анализ групп портов <<<
+        # Первый проход - собираем имена всех групп
+        group_names = set()
+        for line in self.lines:
+            line = line.strip()
+            if not line:
+                continue
 
+            group_match = re.match(r'^Group\s+([\w-]+)\s*{', line, re.IGNORECASE)
+            if group_match:
+                group_names.add(group_match.group(1))
+
+        # Основной проход для обработки конфигурации
         for line in self.lines:
             line = line.strip()
             if not line:
@@ -294,228 +299,211 @@ class fwCode:
                     'name': group_match.group(1),
                     'members': []
                 }
-                current_policy = None # Закрываем другие типы блоков
+                current_policy = None  # Закрываем другие типы блоков
                 current_service_group = None
                 continue
-                # Обработка сервисных групп
-                service_group_match = re.match(r'^Service\s+([\w-]+)\s*{', line, re.IGNORECASE)
 
-                if service_group_match:
-                    current_service_group = {
-                        'name': service_group_match.group(1),
-                        'members': []
-                    }
-                    current_group = None  # Закрываем другие типы блоков
-                    current_policy = None
-                    continue
+            # Обработка сервисных групп
+            service_group_match = re.match(r'^Service\s+([\w-]+)\s*{', line, re.IGNORECASE)
+            if service_group_match:
+                current_service_group = {
+                    'name': service_group_match.group(1),
+                    'members': []
+                }
+                current_group = None  # Закрываем другие типы блоков
+                current_policy = None
+                continue
 
-                # Обработка политик
-                policy_match = re.match(r'^Policy\s+([\w\-\.]+)\s*{', line, re.IGNORECASE)
-                if policy_match:
-                    current_policy = {
-                        'name': policy_match.group(1),
-                        'src': [],
-                        'dst': [],
-                        'svc': [],
-                        'sec': 'base',  # Значение по умолчанию
-                        'after': None
-                    }
-                    current_group = None  # Закрываем другие типы блоков
-                    current_service_group = None
-                    continue
+            # Обработка политик
+            policy_match = re.match(r'^Policy\s+([\w\-\.]+)\s*{', line, re.IGNORECASE)
+            if policy_match:
+                current_policy = {
+                    'name': policy_match.group(1),
+                    'src': [],
+                    'dst': [],
+                    'svc': [],
+                    'sec': 'base',  # Значение по умолчанию
+                    'after': None,
+                    'sif': None,  # поле для source interface
+                    'dif': None  # поле для destination interface
+                }
+                current_group = None  # Закрываем другие типы блоков
+                current_service_group = None
+                continue
 
-                # --- Обработка содержимого блоков ---
+            # --- Обработка содержимого блоков ---
 
-                # Закрытие любого блока
-                if '}' in line:
-                    if current_group:
-                        # ... (сохранение группы адресов) ...
-                        current_group = None
-                    elif current_service_group:  # <--- ВОТ ЭТОТ БЛОК
-                        # !!! НОВЫЙ ОТЛАДОЧНЫЙ ВЫВОД !!!
-                        print(
-                            f"--- DEBUG: Saving Service Group: Name='{current_service_group['name']}', Members={current_service_group['members']}, FWs={self.current_fws} ---")
-                        # !!! КОНЕЦ НОВОГО ВЫВОДА !!!
-
-                        # Цикл по текущим фаерволам
-                        for fw in self.current_fws:
-                            # Если для этого FW еще нет записей о сервисных группах, создаем пустой словарь
-                            if fw not in self.service_groups:
-                                self.service_groups[fw] = {}
-                            # Сохраняем членов группы по имени группы для данного FW
-                            self.service_groups[fw][current_service_group['name']] = current_service_group[
-                                'members']
-                        # Сбрасываем состояние парсинга сервисной группы
-                        current_service_group = None
-                    elif current_policy:
-                        # ... (сохранение политики) ...
-                        current_policy = None
-                    continue  # Переходим к следующей строке после закрытия блока
-
-                # Внутри блока группы адресов
+            # Закрытие любого блока
+            if '}' in line:
                 if current_group:
-                    member = line.strip(' ,;')
-                    if member:
-                        # Проверяем валидность адреса/имени группы перед добавлением
-                        addr_obj = fwNetAddress(member)
-                        if addr_obj.is_valid or re.match(r'^[\w-]+$',
-                                                         member):  # Разрешаем FQDN, IP, Subnet или имена других групп
-                            current_group['members'].append(member)
-                            # Добавление адресов (не групп) в общий список адресов
-                            if addr_obj.type in ('ip', 'subnet', 'fqdn'):
-                                for fw in self.current_fws:
-                                    if fw not in self.addresses: self.addresses[fw] = []
-                                    if member not in self.addresses[fw]:
-                                        self.addresses[fw].append(member)
-                    continue
+                    for fw in self.current_fws:
+                        if fw not in self.groups:
+                            self.groups[fw] = {}
+                        self.groups[fw][current_group['name']] = current_group['members']
+                    current_group = None
+                elif current_service_group:
+                    for fw in self.current_fws:
+                        if fw not in self.service_groups:
+                            self.service_groups[fw] = {}
+                        self.service_groups[fw][current_service_group['name']] = current_service_group['members']
+                    current_service_group = None
+                elif current_policy:
+                    for fw in self.current_fws:
+                        if fw not in self.policies:
+                            self.policies[fw] = []
+                        self.policies[fw].append(current_policy)
+                    current_policy = None
+                continue
 
-                # Внутри блока сервисной группы
-                if current_service_group:
-                    member = line.strip(' ,;')
-                    if member:
-                        # Проверяем валидность формата сервиса (tX, uX, tX-Y, uX-Y)
-                        if self._is_valid_service_member(member):
-                            current_service_group['members'].append(member)
-                        else:
-                            # Можно добавить логирование или обработку ошибки для невалидных членов
-                            print(
-                                f"Предупреждение: Невалидный формат сервиса '{member}' в группе '{current_service_group['name']}'")
-                    continue
+            # Внутри блока группы
+            if current_group:
+                member = line.strip(' ,;')
+                if member:
+                    current_group['members'].append(member)
+                    # Добавление адресов из групп в словарь addresses (для создания адресных объектов)
+                    for fw in self.current_fws:
+                        if fw not in self.addresses:
+                            self.addresses[fw] = []
+                        if member not in self.addresses[fw]:
+                            self.addresses[fw].append(member)
+                continue
 
-                # Внутри блока политики
-                if current_policy:
-                    key_value = re.split(r'\s*=\s*', line, 1)
-                    if len(key_value) == 2:
-                        key = key_value[0].strip().lower()
-                        value = key_value[1].strip()
+            # Внутри блока сервисной группы
+            if current_service_group:
+                member = line.strip(' ,;')
+                if member:
+                    current_service_group['members'].append(member)
 
-                        if key in ('src', 'dst'):
-                            addresses = [a.strip() for a in value.split(',') if a.strip()]
-                            current_policy[key].extend(addresses)
-                            # Добавляем валидные адреса в общий список адресов
-                            for addr in addresses:
+                    # Добавляем порты в отдельный словарь
+                    if member.startswith('t') or member.startswith('u'):
+                        for fw in self.current_fws:
+                            if fw not in self.services:
+                                self.services[fw] = []
+                            if member not in self.services[fw]:
+                                self.services[fw].append(member)
+                continue
+
+            # Внутри блока политики
+            if current_policy:
+                key_value = re.split(r'\s*=\s*', line, 1)
+                if len(key_value) == 2:
+                    key = key_value[0].strip().lower()
+                    value = key_value[1].strip()
+
+                    # Обработка адресов с учетом групп
+                    if key in ('src', 'dst'):
+                        addresses = [a.strip() for a in value.split(',')]
+                        for addr in addresses:
+                            # ВАЖНОЕ ИЗМЕНЕНИЕ: Проверяем, является ли адрес группой
+                            if addr in group_names:
+                                # Это группа - добавляем в список упомянутых групп
+                                self.referenced_groups.add(addr)
+                            else:
+                                # Проверяем, является ли это IP-адресом, подсетью или FQDN
                                 addr_obj = fwNetAddress(addr)
-                                # Добавляем только реальные адреса, не имена групп
                                 if addr_obj.is_valid:
                                     for fw in self.current_fws:
-                                        if fw not in self.addresses: self.addresses[fw] = []
+                                        if fw not in self.addresses:
+                                            self.addresses[fw] = []
                                         if addr not in self.addresses[fw]:
                                             self.addresses[fw].append(addr)
 
-                        elif key == 'svc':
-                            # Разрешаем как имена сервисов/групп, так и прямые определения tX, uX
-                            services = [s.strip() for s in value.split(',') if s.strip()]
-                            current_policy['svc'].extend(services)
-                            # Можно добавить логику для добавления inline-сервисов в общий список, если нужно
+                        # В любом случае добавляем адреса в политику
+                        current_policy[key].extend(addresses)
 
-                        elif key == 'sec':
-                            current_policy['sec'] = value
-                        elif key == 'after':
-                            try:
-                                current_policy['after'] = int(value)
-                            except ValueError:
-                                print(
-                                    f"Предупреждение: Невалидное значение 'after' ({value}) в политике '{current_policy['name']}'")
-                                current_policy['after'] = None  # Сбрасываем, если не число
-                    continue
-            # --- Конец цикла по строкам ---
-        # ОТЛАДОЧНЫЙ ВЫВОД:
-        print("--- DEBUG: End of extract_configuration ---")
-        print(f"Current FWs: {self.current_fws}")
-        print(f"Addresses: {self.addresses}")
-        print(f"Groups: {self.groups}")
-        print(f"Policies: {self.policies}")
-        print(f"Service Groups: {self.service_groups}")  # Самое важное для проверки
-        print("--- END DEBUG ---")
+                    # Обработка интерфейсов (sif, dif)
+                    elif key == 'sif':
+                        current_policy['sif'] = value
+                    elif key == 'dif':
+                        current_policy['dif'] = value
 
+                    # Обработка сервисов и других параметров
+                    elif key == 'svc':
+                        services = [s.strip() for s in value.split(',')]
+                        current_policy['svc'].extend(services)
 
+                        # Новая логика для обработки прямых определений портов в svc
+                        for service in services:
+                            # Если это прямое определение порта (начинается с t или u)
+                            if service.startswith('t') or service.startswith('u'):
+                                for fw in self.current_fws:
+                                    if fw not in self.services:
+                                        self.services[fw] = []
+                                    if service not in self.services[fw]:
+                                        self.services[fw].append(service)
 
-
-
-
+                    elif key == 'sec':
+                        current_policy['sec'] = value
+                    elif key == 'after':
+                        try:
+                            current_policy['after'] = int(value)
+                        except ValueError:
+                            pass  # Игнорируем некорректные значения
 
     def generate_report(self):
-        """Генерирует текстовый отчет о конфигурации, извлеченной из кода."""
         try:
             report = []
-            all_fws = set()
-            all_fws.update(self.addresses.keys())
-            all_fws.update(self.groups.keys())
-            all_fws.update(self.policies.keys())
-            all_fws.update(self.service_groups.keys())  # Учитываем фаерволы из сервисных групп
+            fws = set()
+            fws.update(self.addresses.keys())
+            fws.update(self.groups.keys())
+            fws.update(self.service_groups.keys())  # Добавлено
+            fws.update(self.services.keys())  # Добавлено
+            fws.update(self.policies.keys())
 
-            if not all_fws:
-                return "Не найдено конфигураций для применения."
-
-            sorted_fws = sorted(list(all_fws))
-
-            for fw in sorted_fws:
+            for fw in fws:
                 report.append(f"\n=== Межсетевой экран: {fw} ===")
-                fw_has_content = False
 
-                # Адреса
                 if fw in self.addresses and self.addresses[fw]:
-                    report.append("\nСоздаваемые/используемые адреса:")
-                    # Сортируем адреса для единообразия
-                    sorted_addrs = sorted(self.addresses[fw], key=lambda x: (fwNetAddress(x).type, x))
-                    for addr in sorted_addrs:
-                        addr_type = fwNetAddress(addr).type
+                    report.append("\nСоздаваемые адреса:")
+                    for addr in self.addresses[fw]:
+                        try:
+                            addr_obj = fwNetAddress(addr)
+                            addr_type = addr_obj.type if addr_obj.is_valid else "unknown"
+                        except:
+                            addr_type = "unknown"
                         report.append(f"  - {addr} ({addr_type})")
-                    fw_has_content = True
 
-                # Группы адресов
                 if fw in self.groups and self.groups[fw]:
-                    report.append("\nСоздаваемые/обновляемые группы адресов:")
-                    # Сортируем группы по имени
-                    sorted_group_names = sorted(self.groups[fw].keys())
-                    for group_name in sorted_group_names:
-                        members = self.groups[fw][group_name]
-                        report.append(f"  Группа: {group_name}")
-                        # Сортируем членов группы
-                        sorted_members = sorted(members)
-                        for member in sorted_members:
+                    report.append("\nСоздаваемые группы:")
+                    for group, members in self.groups[fw].items():
+                        report.append(f"  Группа: {group}")
+                        for member in members:
                             report.append(f"    - {member}")
-                    fw_has_content = True
 
-                # Сервисные группы
+                # Отчет для отдельных сервисов (портов)
+                if fw in self.services and self.services[fw]:
+                    report.append("\nСоздаваемые сервисы (порты):")
+                    for service in sorted(self.services[fw]):
+                        protocol = "TCP" if service.startswith('t') else "UDP"
+                        port_range = service[1:]  # Убираем t или u
+                        if "-" in port_range:
+                            report.append(f"  - {service} ({protocol} диапазон портов {port_range})")
+                        else:
+                            report.append(f"  - {service} ({protocol} порт {port_range})")
+
+                # Отчет для сервисных групп
                 if fw in self.service_groups and self.service_groups[fw]:
-                    report.append("\nСоздаваемые/обновляемые сервисные группы:")
-                    # Сортируем группы по имени
-                    sorted_svc_group_names = sorted(self.service_groups[fw].keys())
-                    for group_name in sorted_svc_group_names:
-                        members = self.service_groups[fw][group_name]
-                        report.append(f"  Сервисная группа: {group_name}")
-                        # Сортируем членов группы
-                        sorted_members = sorted(members)
-                        for member in sorted_members:
+                    report.append("\nСоздаваемые группы сервисов:")
+                    for group, members in self.service_groups[fw].items():
+                        report.append(f"  Сервисная группа: {group}")
+                        for member in members:
                             report.append(f"    - {member}")
-                    fw_has_content = True
 
-                # Политики
                 if fw in self.policies and self.policies[fw]:
                     report.append("\nСоздаваемые политики:")
-                    # Сортируем политики по имени
-                    sorted_policies = sorted(self.policies[fw], key=lambda p: p['name'])
-                    for policy in sorted_policies:
+                    for policy in self.policies[fw]:
                         report.append(f"  Политика: {policy['name']}")
-                        report.append(f"    Источники: {', '.join(sorted(policy['src']))}")
-                        report.append(f"    Назначения: {', '.join(sorted(policy['dst']))}")
-                        report.append(f"    Сервисы: {', '.join(sorted(policy['svc']))}")
+                        report.append(f"    Интерфейс источника: {policy['sif']}")
+                        report.append(f"    Интерфейс назначения: {policy['dif']}")
+                        report.append(f"    Источники: {', '.join(policy['src'])}")
+                        report.append(f"    Назначения: {', '.join(policy['dst'])}")
+                        report.append(f"    Сервисы: {', '.join(policy['svc'])}")
                         report.append(f"    Профиль безопасности: {policy['sec']}")
-                        if policy['after'] is not None:
-                            report.append(f"    Разместить после правила ID: {policy['after']}")
-                        else:
-                            report.append(f"    Разместить в конце")  # Уточнение, если after не задан
-                    fw_has_content = True
+                        if policy['after']:
+                            report.append(f"    Разместить после правила: {policy['after']}")
 
-                if not fw_has_content:
-                    report.append("  (Нет изменений для этого МЭ)")
-
-            return "\n".join(report)
+            return "\n".join(report) if report else "Нет изменений для применения"
         except Exception as e:
-            # Логирование ошибки может быть полезно
-            import traceback
-            print(f"Ошибка генерации отчета: {str(e)}\n{traceback.format_exc()}")
             return f"Ошибка генерации отчета: {str(e)}"
 
 
