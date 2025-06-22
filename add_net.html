@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Добавить сеть{% endblock %}
+
+{% block content %}
+<h2>Добавить новую сеть</h2>
+
+<!-- Добавляем новый блок для загрузки Excel файла -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5>Массовая загрузка сетей из Excel</h5>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('upload_excel') }}" enctype="multipart/form-data" id="excel-form">
+            <div class="mb-3">
+                <label for="excel_file" class="form-label">Выберите файл Excel</label>
+                <input type="file" class="form-control" id="excel_file" name="excel_file" accept=".xlsx" required>
+                <div class="form-text">Загрузите файл Excel со списком сетей</div>
+            </div>
+            <div class="d-flex">
+                <button type="submit" class="btn btn-success me-2">Загрузить</button>
+                <a href="{{ url_for('download_template') }}" class="btn btn-outline-secondary">Скачать шаблон</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Горизонтальный разделитель -->
+<hr class="my-4">
+
+<!-- Оригинальная форма для одиночного добавления - обернем в форму с id -->
+<form method="POST" action="{{ url_for('add_net') }}" id="single-net-form">
+    <div class="mb-3">
+        <label for="name" class="form-label">Имя сети</label>
+        <input type="text" class="form-control" id="name" name="name" readonly required>
+    </div>
+
+    <!-- Остальные поля формы остаются без изменений -->
+    <div class="mb-3">
+        <label for="site" class="form-label">Площадка</label>
+        <select class="form-select" id="site" name="site" required onchange="generateName()">
+            <option value="" selected disabled>Выберите площадку</option>
+            {% for site in sites %}
+            <option value="{{ site.id }}">{{ site.name }} ({{ site.description }})</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="mb-3">
+        <label for="ipv4" class="form-label">IPv4 сеть</label>
+        <input type="text" class="form-control" id="ipv4" name="ipv4" placeholder="192.168.1.0/24" required oninput="generateName()">
+    </div>
+
+    <div class="mb-3">
+        <label for="type" class="form-label">Тип сети</label>
+        <select class="form-select" id="type" name="type" required onchange="generateName()">
+            <option value="" selected disabled>Выберите тип</option>
+            {% for type in types %}
+            <option value="{{ type.id }}">{{ type.name }} ({{ type.description }})</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="mb-3">
+        <label for="description" class="form-label">Описание</label>
+        <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+    </div>
+    <!-- Остальные поля формы остаются без изменений -->
+	<button type="submit" class="btn btn-primary">Сохранить</button>
+    <a href="{{ url_for('show_nets') }}" class="btn btn-secondary">Отмена</a>
+</form>
+
+{% block scripts %}
+<script>
+function generateName() {
+        const siteSelect = document.getElementById('site');
+        const ipv4Input = document.getElementById('ipv4');
+        const typeSelect = document.getElementById('type');
+        const nameInput = document.getElementById('name');
+
+        // Проверяем, что все обязательные поля заполнены
+        if (!siteSelect.value || !ipv4Input.value || !typeSelect.value) {
+            nameInput.value = '';
+            return;
+        }
+
+        // Формируем имя по шаблону: кодПлощадки_ipv4сеть_КодТипаСети
+        const siteCode = siteSelect.value ? siteSelect.value + '_' : '';
+        const ipv4Value = ipv4Input.value ? ipv4Input.value : '';
+        const typeCode = typeSelect.value ? '_' + typeSelect.value : '';
+
+        nameInput.value = siteCode + ipv4Value + typeCode;
+    }
+
+    // Навешиваем обработчики на изменение полей
+    document.getElementById('site').addEventListener('change', generateName);
+    document.getElementById('ipv4').addEventListener('input', generateName);
+    document.getElementById('type').addEventListener('change', generateName);
+
+    // Инициализация при загрузке страницы
+    document.addEventListener('DOMContentLoaded', generateName);
+
+    // Отключаем стандартную HTML5 валидацию для формы загрузки Excel
+    document.getElementById('excel-form').addEventListener('submit', function(event) {
+        // Проверяем только наличие файла
+        const excelFile = document.getElementById('excel_file');
+        if (!excelFile.files || excelFile.files.length === 0) {
+            event.preventDefault();
+            alert('Пожалуйста, выберите файл Excel для загрузки');
+            return false;
+        }
+
+        // Если файл выбран, разрешаем отправку формы, игнорируя валидацию других форм
+        const singleNetForm = document.getElementById('single-net-form');
+        const requiredInputs = singleNetForm.querySelectorAll('[required]');
+
+        // Временно снимаем атрибут required со всех полей одиночной формы
+        requiredInputs.forEach(input => {
+            input.setAttribute('data-was-required', 'true');
+            input.removeAttribute('required');
+        });
+
+        // После отправки формы восстанавливаем атрибуты (это не выполнится, так как будет перенаправление)
+        setTimeout(() => {
+            requiredInputs.forEach(input => {
+                if (input.getAttribute('data-was-required') === 'true') {
+                    input.setAttribute('required', '');
+                    input.removeAttribute('data-was-required');
+                }
+            });
+        }, 100);
+    });
+</script>
+{% endblock scripts %}
+{% endblock content %}
