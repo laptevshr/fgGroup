@@ -251,31 +251,23 @@ class fwCode:
 
         return {'output': output, 'variables': variables}
 
+
+
+
     def extract_configuration(self):
         self.current_fws = []
         self.addresses = {}
         self.groups = {}
         self.policies = {}
         self.service_groups = {}  # Словарь для сервисных групп
-        self.services = {}  # Словарь для отдельных сервисов
-        self.referenced_groups = set()  # Новый набор для отслеживания упомянутых групп
+        self.services = {}  # Новый словарь для отдельных сервисов
 
         current_group = None
         current_policy = None
         current_service_group = None
 
-        # Первый проход - собираем имена всех групп
-        group_names = set()
-        for line in self.lines:
-            line = line.strip()
-            if not line:
-                continue
 
-            group_match = re.match(r'^Group\s+([\w-]+)\s*{', line, re.IGNORECASE)
-            if group_match:
-                group_names.add(group_match.group(1))
 
-        # Основной проход для обработки конфигурации
         for line in self.lines:
             line = line.strip()
             if not line:
@@ -299,12 +291,13 @@ class fwCode:
                     'name': group_match.group(1),
                     'members': []
                 }
-                current_policy = None  # Закрываем другие типы блоков
+                current_policy = None # Закрываем другие типы блоков
                 current_service_group = None
                 continue
 
             # Обработка сервисных групп
             service_group_match = re.match(r'^Service\s+([\w-]+)\s*{', line, re.IGNORECASE)
+
             if service_group_match:
                 current_service_group = {
                     'name': service_group_match.group(1),
@@ -325,7 +318,7 @@ class fwCode:
                     'sec': 'base',  # Значение по умолчанию
                     'after': None,
                     'sif': None,  # поле для source interface
-                    'dif': None  # поле для destination interface
+                    'dif': None   # поле для destination interface
                 }
                 current_group = None  # Закрываем другие типы блоков
                 current_service_group = None
@@ -360,7 +353,7 @@ class fwCode:
                 member = line.strip(' ,;')
                 if member:
                     current_group['members'].append(member)
-                    # Добавление адресов из групп в словарь addresses (для создания адресных объектов)
+                    # Добавление адресов из групп
                     for fw in self.current_fws:
                         if fw not in self.addresses:
                             self.addresses[fw] = []
@@ -390,25 +383,17 @@ class fwCode:
                     key = key_value[0].strip().lower()
                     value = key_value[1].strip()
 
-                    # Обработка адресов с учетом групп
+                    # Обработка адресов
                     if key in ('src', 'dst'):
                         addresses = [a.strip() for a in value.split(',')]
                         for addr in addresses:
-                            # ВАЖНОЕ ИЗМЕНЕНИЕ: Проверяем, является ли адрес группой
-                            if addr in group_names:
-                                # Это группа - добавляем в список упомянутых групп
-                                self.referenced_groups.add(addr)
-                            else:
-                                # Проверяем, является ли это IP-адресом, подсетью или FQDN
-                                addr_obj = fwNetAddress(addr)
-                                if addr_obj.is_valid:
-                                    for fw in self.current_fws:
-                                        if fw not in self.addresses:
-                                            self.addresses[fw] = []
-                                        if addr not in self.addresses[fw]:
-                                            self.addresses[fw].append(addr)
-
-                        # В любом случае добавляем адреса в политику
+                            addr_obj = fwNetAddress(addr) if 'fwNetAddress' in globals() else None
+                            if addr_obj and addr_obj.is_valid:
+                                for fw in self.current_fws:
+                                    if fw not in self.addresses:
+                                        self.addresses[fw] = []
+                                    if addr not in self.addresses[fw]:
+                                        self.addresses[fw].append(addr)
                         current_policy[key].extend(addresses)
 
                     # Обработка интерфейсов (sif, dif)
@@ -439,6 +424,9 @@ class fwCode:
                             current_policy['after'] = int(value)
                         except ValueError:
                             pass  # Игнорируем некорректные значения
+
+
+
 
     def generate_report(self):
         try:
