@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}Главная{% endblock %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    {% endif %}
+{% endwith %}
+
+{% block content %}
+<h2>Добро пожаловать в FortiGate Helper</h2>
+<p>Используйте меню навигации для управления сетями и группами.</p>
+
+<div class="row mt-4">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Сети</h5>
+                <p class="card-text">Всего сетей: {{ nets_count }}</p>
+                <a href="{{ url_for('show_nets') }}" class="btn btn-primary">Перейти</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Локальные группы</h5>
+                <p class="card-text">Всего групп: {{ local_groups_count }}</p>
+                <a href="{{ url_for('show_groups') }}" class="btn btn-primary">Перейти</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Синхронизация с FG</h5>
+                <p class="card-text">
+                    {% if sync_fg_status %}
+                        <span class="text-success">
+                            <i class="bi bi-check-circle-fill"></i> Синхронизировано
+                        </span>
+                    {% else %}
+                        <span class="text-danger">
+                            <i class="bi bi-x-circle-fill"></i> Необходимо выполнить синхронизацию
+                        </span>
+                    {% endif %}
+                </p>
+                <div class="d-flex justify-content-between">
+                    <form method="POST" action="{{ url_for('sync_groups') }}">
+                        <button type="submit" class="btn btn-sm btn-primary">
+                            <i class="bi bi-arrow-repeat"></i> Синхронизировать
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Firewalls</h5>
+                <p class="card-text">Всего устройств: {{ firewalls_count }}</p>
+                <a href="{{ url_for('settings', tab='firewalls') }}" class="btn btn-primary">Перейти</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<div class="row mt-4">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Resolve IP or FQDN</h5>
+                <p class="card-text"></p>
+                <a href="{{ url_for('show_resolve') }}" class="btn btn-primary">Перейти</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Code</h5>
+                <p class="card-text"></p>
+                <a href="{{ url_for('code') }}" class="btn btn-primary">Перейти</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body">
+
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
