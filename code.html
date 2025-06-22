@@ -6,6 +6,26 @@
 <h2>Редактор кода для правил FortiGate</h2>
 <p>Создавайте и проверяйте правила для межсетевых экранов</p>
 
+<style>
+    .code-block {
+    font-family: 'Courier New', monospace;
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 5px;
+    line-height: 1.5;
+}
+
+.global-rule { color: #d63384; } /* Розовый для комментариев правил */
+.name { color: black; }
+.name-ngfw { color: black; font-weight: bold;}
+.set-directive { color: #0d6efd; ; font-weight: bold;} /* Синий для директив */
+.comment { color: #6c757d; font-style: italic; } /* Серый курсив для комментариев */
+.property { color: green; font-weight: bold; } /* Серый курсив для комментариев */
+.group-name { color: #198754; } /* Зеленый для групповых блоков */
+.identifier { color: #dc3545; font-weight: bold; } /* Красный жирный для идентификаторов */
+
+</style>
+
 <!-- Блок с информацией о firewalls -->
 <div class="row mt-4">
     {% for fw in firewalls %}
@@ -32,17 +52,41 @@
             </div>
             <div class="card-body">
                 <pre class="bg-light p-3 rounded">
+                    <code class="global-rule">
+<code class="comment">
 # Правила всегда создаются разрешающими и выключенными
 # Пример правила
-# Пример матрицы доступа
+# Пример матрицы доступа</code>
 
-Set SAR2-NGFW-VDOM_GLOBAL # Применяем к МЭ пользовательскому
+<code class="set-directive">Set</code> <code class="name-ngfw">MSK1-NGFW-EDGE-VDOM_Global</code><code class="comment"> # Применяем к МЭ доступа в Интернет</code>
+<code class="comment"># Расширенный доступ в Интернет по АРМ</code>
+<code class="set-directive">Group</code> <code class="name">ARMs_AdvAcc_Internet</code> {
+MSKNB-01788.interrao.ru
+}
 
-Group ALT_TEST {
+<code class="comment"># Полный доступ в Интернет по АРМ</code>
+<code class="set-directive">Group</code> <code class="name">ARMs_FullAcc_Internet</code> {
+MSKNB-01788.interrao.ru
+}
+
+<code class="comment"># Полный доступ с облаками в Интернет по АРМ</code>
+<code class="set-directive">Group</code> <code class="name">ARMs_FullCloudAcc_Internet</code> {
+MSKNB-01788.interrao.ru
+}
+
+<code class="set-directive">Set</code> <code class="name-ngfw">SAR2-NGFW-VDOM_GLOBAL</code> <code class="comment"># Применяем к МЭ пользовательскому</code>
+
+<code class="set-directive">Group</code> <code class="name">ALT_TEST</code> {
 	8.8.8.8/32
 }
 
-Group ext_grp_banki {
+<code class="comment"># Сервис RDP</code>
+<code class="set-directive">Service</code> <code class="name">RDP</code> {
+    t3389
+    u3389
+}
+
+<code class="set-directive">Group</code> <code class="name">ext_grp_banki</code> {
 	sbrf.ru
 	alfa.ru
 	tinkoff.ru
@@ -51,26 +95,28 @@ Group ext_grp_banki {
 	ext_grp_dns
 }
 
-Policy msk1_ws01_2_google.com {
-	src=msk1_ws01.interrao.ru
-	src=192.168.100.24/32
-	src=10.132.10.0/24
-	dst=google.com
-	dst=ext_grp_banki
-	svc=https
-	svc=http
-	sec=base
-	after=584
+<code class="set-directive">Policy</code> <code class="name">msk1_ws01_2_google.com</code> {
+	<code class="property">sif</code>=any
+	<code class="property">dif</code>=port2
+	<code class="property">src</code>=msk1_ws01.interrao.ru
+	<code class="property">src</code>=192.168.100.24/32
+	<code class="property">src</code>=10.132.10.0/24
+	<code class="property">dst</code>=google.com
+	<code class="property">dst</code>=ext_grp_banki
+	<code class="property">svc</code>=https
+	<code class="property">svc</code>=http
+	<code class="property">sec</code>=base
+	<code class="property">after</code>=584
 }
 
-Set SAR2_NGFW-VDOM_LAN # Применяем к МЭ серверному
-
-Group ext_grp_avpo {
+<code class="set-directive">Set</code> <code class="name-ngfw">SAR2_NGFW-VDOM_LAN</code> <code class="comment"># Применяем к МЭ серверному</code>
+<code class="set-directive">Group</code> <code class="name">ext_grp_avpo</code> {
 	kaspersky.ru
 	nod32.com
 	avast.com
 	8.3.6.2/32
 }
+                        </code>
                 </pre>
             </div>
         </div>
@@ -234,7 +280,8 @@ function highlightSyntax() {
         .replace(/\b(FW)\b/gi, '<span style="color: red; font-weight: bold;">$1</span>')
         .replace(/\b(sec)\b/gi, '<span style="color: #dc3545;">$1</span>')
         .replace(/\b(svc)\b/gi, '<span style="color: #6f42c1;">$1</span>')
-        .replace(/\b(src|dst)\b/gi, '<span style="color: #198754; font-weight: bold;">$1</span>')
+        .replace(/\b(after)\b/gi, '<span style="color: orange;">$1</span>')
+        .replace(/\b(src|dst|sif|dif)\b/gi, '<span style="color: #198754; font-weight: bold;">$1</span>')
         .replace(/(\{|\})/g, '<span style="color: #6c757d; background-color: #f8f9fa;">$1</span>');
 
     editor.innerHTML = highlighted;
