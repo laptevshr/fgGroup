@@ -1,79 +1,77 @@
-import ipaddress
-import re
-import socket
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FortiGate Helper - {% block title %}{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.0/font/bootstrap-icons.css">
+    <style>
+        .gap-1 { gap: 0.25rem; }
+        .card-header .bi { margin-right: 0.5rem; }
 
+        #configReport {
+            white-space: pre-wrap;
+            font-family: monospace;
+            background-color: #f8f9fa;
+            padding: 1rem;
+            border-radius: 0.25rem;
+        }
 
-class fwNetAddress:
-    def __init__(self, address):
-        """
-        Инициализация объекта адреса
-        :param address: строка с IP, подсетью или FQDN
-        """
-        self.original_address = str(address).strip()
-        self.address_type = self._determine_address_type()
-        self.valid = self._validate_address()
+        .spinner-border {
+            vertical-align: text-top;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">FortiGate Helper</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'home' %}active{% endif %}" href="{{ url_for('home') }}">Главная</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'show_nets' %}active{% endif %}" href="{{ url_for('show_nets') }}">Сети</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'show_groups' %}active{% endif %}" href="{{ url_for('show_groups') }}">Группы</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'add_net' %}active{% endif %}" href="{{ url_for('add_net') }}">Добавить сеть</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">Настройки</a>
+                    </li>
+                </ul>
+                <span class="navbar-text me-3">
+                    Привет, {{ session.get('fullname', 'Гость') }}!
+                </span>
+                <a href="{{ url_for('logout') }}" class="btn btn-outline-light">Выйти</a>
+            </div>
+        </div>
+    </nav>
 
-    def _determine_address_type(self):
-        """Определяет тип адреса: ip, subnet, fqdn или other"""
-        # Проверяем на IP/подсеть
-        try:
-            ipaddress.IPv4Network(self.original_address, strict=False)
-            return 'ip' if '/' not in self.original_address else 'subnet'
-        except ValueError:
-            pass
+    <div class="container mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
 
-        # Проверяем на FQDN
-        if self._is_valid_fqdn(self.original_address):
-            return 'fqdn'
+        {% block content %}{% endblock %}
+    </div>
 
-        return 'other'
-
-    def _is_valid_fqdn(self, fqdn):
-        """Проверяет валидность FQDN"""
-        if not fqdn or len(fqdn) > 255:
-            return False
-        if fqdn[-1] == ".":
-            fqdn = fqdn[:-1]
-        allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
-        return all(allowed.match(x) for x in fqdn.split("."))
-
-    def _validate_address(self):
-        """Проверяет валидность адреса в зависимости от его типа"""
-        if self.address_type in ('ip', 'subnet'):
-            try:
-                ipaddress.IPv4Network(self.original_address, strict=False)
-                return True
-            except ValueError:
-                return False
-        elif self.address_type == 'fqdn':
-            return self._is_valid_fqdn(self.original_address)
-        return False  # Для типа 'other' считаем невалидным
-
-    def contains(self, other_address):
-        """
-        Проверяет, входит ли другой адрес в текущую подсеть
-        :param other_address: строка с IP адресом для проверки
-        :return: bool
-        """
-        if self.address_type != 'subnet':
-            return False
-
-        try:
-            network = ipaddress.IPv4Network(self.original_address, strict=False)
-            other_ip = ipaddress.IPv4Address(other_address)
-            return other_ip in network
-        except (ValueError, ipaddress.AddressValueError):
-            return False
-
-    def __str__(self):
-        return f"fwIPv4(type={self.address_type}, address={self.original_address}, valid={self.valid})"
-
-    @property
-    def is_valid(self):
-        """Возвращает True если адрес валидный"""
-        return self.valid
-
-    @property
-    def type(self):
-        """Возвращает тип адреса"""
-        return self.address_type
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
