@@ -15,7 +15,7 @@ import pandas as pd
 import os
 from io import BytesIO
 
-
+# 13-05-2025
 
 # DNS RESOLVE >>>
 import dns.resolver
@@ -728,11 +728,16 @@ def parse_port_string(port_str):
         return protocol, int(port_range), None
 
 
+
+
+
 def create_fortigate_policy(firewall, policy_data):
     try:
         if firewall['ipv4'] == '10.128.34.220':
+            print(f"Just http protocol")
             base_url = f"http://{firewall['ipv4']}/api/v2"
         else:
+            print(f"https protocol")
             base_url = f"https://{firewall['ipv4']}/api/v2"
 
         headers = {
@@ -741,76 +746,34 @@ def create_fortigate_policy(firewall, policy_data):
         }
         params = {"vdom": firewall['VDOM']}
 
-        # Функция для URL-кодирования слешей в адресах
-        def encode_slash(addr):
-            return addr.replace('/', '%2f')
+        services = []
+        if policy_data.get('svc') and len(policy_data['svc']) > 0:
+            services = [{"name": svc} for svc in policy_data['svc']]
+        else:
+            services = [{"name": "ALL"}]  # Всегда добавляем DEFAULT сервис, если список пуст
 
-        # Создаем базовый объект политики
-        policy_obj = {
+
+        if policy_data.get('sif'):
+            rrr=policy_data
+
+        policy_json = {
             "name": policy_data['name'],
+            "srcintf": [{"name": policy_data['sif'] if policy_data.get('sif') else 'any'}],
+            "dstintf": [{"name": policy_data['dif'] if policy_data.get('dif') else 'any'}],
+            "srcaddr": [{"name": addr} for addr in policy_data['src']],
+            "dstaddr": [{"name": addr} for addr in policy_data['dst']],
+            "service": services,
             "action": "accept",
             "status": "disable",
-            "schedule": [{"name": "always"}],
+            "comments": "Create automatically",
+            "schedule": "always",
             "logtraffic": "all",
+            "logtraffic-start": "enable"
         }
 
-        # Добавляем интерфейсы
-        policy_obj["srcintf"] = [{"name": policy_data.get('sif') or "any"}]
-        policy_obj["dstintf"] = [{"name": policy_data.get('dif') or "any"}]
-
-        # Добавляем адреса с URL-кодированием слеша
-        if policy_data.get('src') and len(policy_data['src']) > 0:
-            policy_obj["srcaddr"] = []
-            for addr in policy_data['src']:
-                # Заменяем / на %2f только если это IP/CIDR нотация
-                if '/' in addr and all(c in '0123456789./' for c in addr):
-                    policy_obj["srcaddr"].append({"name": encode_slash(addr)})
-                else:
-                    # Для групп и других типов оставляем без изменений
-                    policy_obj["srcaddr"].append({"name": addr})
-        else:
-            policy_obj["srcaddr"] = [{"name": "all"}]
-
-        if policy_data.get('dst') and len(policy_data['dst']) > 0:
-            policy_obj["dstaddr"] = []
-            for addr in policy_data['dst']:
-                # Заменяем / на %2f только если это IP/CIDR нотация
-                if '/' in addr and all(c in '0123456789./' for c in addr):
-                    policy_obj["dstaddr"].append({"name": encode_slash(addr)})
-                else:
-                    # Для групп и других типов оставляем без изменений
-                    policy_obj["dstaddr"].append({"name": addr})
-        else:
-            policy_obj["dstaddr"] = [{"name": "all"}]
-
-        # Добавляем сервисы
-        if policy_data.get('svc') and len(policy_data['svc']) > 0:
-            processed_services = []
-            for svc in policy_data['svc']:
-                if svc.startswith('t') or svc.startswith('u'):
-                    protocol = "tcp" if svc.startswith('t') else "udp"
-                    port_range = svc[1:]
-                    service_name = f"{protocol}_{port_range}"
-                    processed_services.append(service_name)
-                else:
-                    processed_services.append(svc)
-
-            policy_obj["service"] = [{"name": svc} for svc in processed_services]
-        else:
-            policy_obj["service"] = [{"name": "ALL"}]
-
-        # Устанавливаем policyid если указано
-        #if policy_data.get('after'):
-        #    policy_obj['policyid'] = policy_data['after'] + 1
-
-        # Оборачиваем данные в 'json' для FortiGate API
         policy_json = {
-            "json": policy_obj
+            "json": policy_json
         }
-
-        print(f"Sending policy data with URL-encoded slashes: {policy_json}")
-
-        # Отправляем запрос
         response = requests.post(
             f"{base_url}/cmdb/firewall/policy",
             headers=headers,
@@ -818,16 +781,50 @@ def create_fortigate_policy(firewall, policy_data):
             json=policy_json,
             verify=False
         )
-
+        # Добавляем логирование ответа для отладки
         print(f"Status code: {response.status_code}")
         print(f"Response content: {response.text}")
 
-        return response.status_code in [200, 201, 204]
+
+        if response.status_code in [200, 201, 204]:
+            response_data = response.json()
+            mkey = response_data.get('mkey')
+
+            if policy_data['after']:
+                params = {
+                    "vdom": firewall['VDOM'],
+                    "action": "move",
+                    "after": str(policy_data['after'])
+                }
+
+                response = requests.put(
+                    f"{base_url}/cmdb/firewall/policy/{mkey}",
+                    headers=headers,
+                    params=params,
+                    verify=False
+                )
+
+                if response.status_code not in [200, 201, 204]:
+                    return {
+                        'status': 'error',
+                        'message': f"HTTP {response.status_code}: {response.text}",
+                        'response': response.json()
+                    }
+                else:
+                    return {
+                        'status': 'succes',
+                        'message': f"HTTP {response.status_code}: {response.text}",
+                        'response': response.json()
+                    }
+        else:
+            return {
+                'status': 'error',
+                'message': f"HTTP {response.status_code}: {response.text}",
+                'response': response.json()
+            }
 
     except Exception as e:
         print(f"Error creating policy: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
         return False
 
 
@@ -962,7 +959,14 @@ def apply_code():
 
                 transformed_policy['svc'] = transformed_svc
                 success = create_fortigate_policy(firewall, transformed_policy)
-                results['policies'][fw].append({'policy': policy['name'], 'status': 'created' if success else 'error'})
+                if success.get('status') in 'error':
+                    return jsonify({
+                        'success': False,
+                        'message': success.get('message'),
+                        'results': None
+                    })
+                else:
+                    results['policies'][fw].append({'policy': policy['name'], 'status': 'created' if success else 'error'})
 
         return jsonify({
             'success': True,
@@ -1710,6 +1714,27 @@ def delete_net(net_id):
         flash(f'Сеть "{net_name}" удалена. Обновлено групп: {groups_updated}', 'success')
     except Exception as e:
         flash(f'Ошибка при удалении сети: {str(e)}', 'danger')
+
+    return redirect(url_for('show_nets'))
+
+
+
+@app.route('/edit_net/<net_id>', methods=['POST'])
+def edit_net(net_id):
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    try:
+        # Находим сеть для редактирования
+        net = nets.find_one({"_id": ObjectId(net_id)})
+        if not net:
+            flash('Сеть не найдена', 'danger')
+            return redirect(url_for('show_nets'))
+
+        net_name = net['name']
+
+    except Exception as e:
+        flash(f'Ошибка при изменении сети: {str(e)}', 'danger')
 
     return redirect(url_for('show_nets'))
 
