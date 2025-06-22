@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+
+{% block title %}Настройки{% endblock %}
+
+{% block content %}
+<h2>Настройки системы</h2>
+
+<ul class="nav nav-tabs mb-4">
+    <li class="nav-item">
+        <a class="nav-link {% if tab == 'sites' %}active{% endif %}" href="{{ url_for('settings', tab='sites') }}">Площадки</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if tab == 'typenets' %}active{% endif %}" href="{{ url_for('settings', tab='typenets') }}">Типы сетей</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if tab == 'firewalls' %}active{% endif %}" href="{{ url_for('settings', tab='firewalls') }}">Firewalls</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if tab == 'dns_servers' %}active{% endif %}" href="{{ url_for('settings', tab='dns_servers') }}">DNS Servers</a>
+    </li>
+</ul>
+
+{% if tab == 'sites' %}
+<h3>Площадки</h3>
+<table class="table table-striped table-hover">
+    <thead>
+        <tr>
+            <th>Имя</th>
+            <th>Описание</th>
+            <th>ID</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for site in sites %}
+        <tr>
+            <td>{{ site.name }}</td>
+            <td>{{ site.description }}</td>
+            <td>{{ site.id }}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal" 
+                        data-id="{{ site._id }}" data-name="{{ site.name }}" 
+                        data-description="{{ site.description }}" data-otherid="{{ site.id }}">
+                    Изменить
+                </button>
+                <form method="POST" action="{{ url_for('settings', tab='sites') }}" class="d-inline">
+                    <input type="hidden" name="delete_id" value="{{ site._id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% elif tab == 'typenets' %}
+<h3>Типы сетей</h3>
+<table class="table table-striped table-hover">
+    <thead>
+        <tr>
+            <th>Имя</th>
+            <th>Описание</th>
+            <th>ID</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for type in types %}
+        <tr>
+            <td>{{ type.name }}</td>
+            <td>{{ type.description }}</td>
+            <td>{{ type.id }}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal" 
+                        data-id="{{ type._id }}" data-name="{{ type.name }}" 
+                        data-description="{{ type.description }}" data-otherid="{{ type.id }}">
+                    Изменить
+                </button>
+                <form method="POST" action="{{ url_for('settings', tab='typenets') }}" class="d-inline">
+                    <input type="hidden" name="delete_id" value="{{ type._id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% elif tab == 'firewalls' %}
+<h3>Firewalls</h3>
+<table class="table table-striped table-hover">
+    <thead>
+        <tr>
+            <th>Имя</th>
+            <th>Описание</th>
+            <th>IP адрес</th>
+            <th>VDOM</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for fw in firewalls %}
+        <tr>
+            <td>{{ fw.NameNGFW }}</td>
+            <td>{{ fw.description }}</td>
+            <td>{{ fw.ipv4 }}</td>
+            <td>{{ fw.VDOM }}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal" 
+                        data-id="{{ fw._id }}" data-name="{{ fw.name }}" 
+                        data-description="{{ fw.description }}" data-otherid="{{ fw.id }}"
+                        data-ngfw="{{ fw.NameNGFW }}" data-vdom="{{ fw.VDOM }}"
+                        data-ipv4="{{ fw.ipv4 }}" data-apikey="{{ fw.apikey }}">
+                    Изменить
+                </button>
+                <form method="POST" action="{{ url_for('settings', tab='firewalls') }}" class="d-inline">
+                    <input type="hidden" name="delete_id" value="{{ fw._id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% elif tab == 'dns_servers' %}
+<h3>DNS серверы</h3>
+<table class="table table-striped table-hover">
+    <thead>
+        <tr>
+            <th>Название</th>
+            <th>IP адрес</th>
+            <th>По умолчанию</th>
+            <th>Описание</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for server in dns_servers %}
+        <tr>
+            <td>{{ server.name }}</td>
+            <td>{{ server.ip }}</td>
+            <td>
+                {% if server.default %}
+                <i class="bi bi-check-circle-fill text-success"></i>
+                {% endif %}
+            </td>
+            <td>{{ server.description }}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary"
+                        data-bs-toggle="modal"
+                        data-bs-target="#editModal"
+                        data-id="{{ server._id }}"
+                        data-name="{{ server.name }}"
+                        data-ip="{{ server.ip }}"
+                        data-description="{{ server.description }}"
+                        data-default="{{ 'true' if server.default else 'false' }}">
+                    Изменить
+                </button>
+
+                <form method="POST" action="{{ url_for('settings', tab='dns_servers') }}" class="d-inline">
+                    <input type="hidden" name="delete_id" value="{{ server._id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endif %}
+
+<button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#editModal">Добавить</button>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('settings', tab=tab) }}">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editModalLabel">
+                        {% if tab == 'sites' %}Площадка
+                        {% elif tab == 'typenets' %}Тип сети
+                        {% elif tab == 'firewalls' %}Firewall
+                        {% else %}DNS Servers
+                        {% endif %}
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="existing_id" id="existing_id">
+                    
+                    {% if tab == 'sites' or tab == 'typenets' %}
+                    <div class="mb-3">
+                        <label for="edit_name" class="form-label">Имя</label>
+                        <input type="text" class="form-control" id="edit_name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_description" class="form-label">Описание</label>
+                        <input type="text" class="form-control" id="edit_description" name="description">
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_id" class="form-label">ID</label>
+                        <input type="text" class="form-control" id="edit_id" name="id" required>
+                    </div>
+                    
+                    {% elif tab == 'firewalls' %}
+                    <div class="mb-3">
+                        <label for="edit_name" class="form-label">Короткое имя</label>
+                        <input type="text" class="form-control" id="edit_name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_ngfw" class="form-label">Имя NGFW</label>
+                        <input type="text" class="form-control" id="edit_ngfw" name="NameNGFW" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_description" class="form-label">Описание</label>
+                        <input type="text" class="form-control" id="edit_description" name="description">
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_id" class="form-label">ID</label>
+                        <input type="text" class="form-control" id="edit_id" name="id" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_vdom" class="form-label">VDOM</label>
+                        <input type="text" class="form-control" id="edit_vdom" name="VDOM" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_ipv4" class="form-label">IP адрес</label>
+                        <input type="text" class="form-control" id="edit_ipv4" name="ipv4" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_apikey" class="form-label">API Key</label>
+                        <input type="text" class="form-control" id="edit_apikey" name="apikey" required>
+                    </div>
+
+                    {% elif tab == 'dns_servers' %}
+                    <div class="mb-3">
+                        <label for="edit_name" class="form-label">Название сервера</label>
+                        <input type="text" class="form-control" id="edit_name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_ip" class="form-label">IP адрес DNS сервера</label>
+                        <input type="text" class="form-control" id="edit_ip" name="ip" required placeholder="8.8.8.8">
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_description" class="form-label">Описание</label>
+                        <input type="text" class="form-control" id="edit_description" name="description" placeholder="Google Public DNS">
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="edit_default" name="default">
+                        <label class="form-check-label" for="edit_default">Использовать по умолчанию</label>
+                    </div>
+                    {% endif %}
+
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var editModal = document.getElementById('editModal');
+    editModal.addEventListener('show.bs.modal', function (event) {
+        var button = event.relatedTarget;
+        var currentTab = '{{ tab }}'; // Получаем текущую вкладку из шаблона
+
+        // Сбросить все поля формы
+        document.getElementById('existing_id').value = '';
+        document.getElementById('edit_name').value = '';
+        document.getElementById('edit_description').value = '';
+
+        // Сбросить специфичные поля для разных вкладок
+        if (currentTab === 'sites' || currentTab === 'typenets' || currentTab === 'firewalls') {
+            document.getElementById('edit_id').value = '';
+        }
+
+        if (currentTab === 'firewalls') {
+            document.getElementById('edit_ngfw').value = '';
+            document.getElementById('edit_vdom').value = '';
+            document.getElementById('edit_ipv4').value = '';
+            document.getElementById('edit_apikey').value = '';
+        }
+
+        if (currentTab === 'dns_servers') {
+            document.getElementById('edit_ip').value = '';
+            document.getElementById('edit_default').checked = false;
+        }
+
+        if (button.getAttribute('data-id')) {
+            // Edit mode - заполняем общие поля
+            document.getElementById('existing_id').value = button.getAttribute('data-id');
+            document.getElementById('edit_name').value = button.getAttribute('data-name') || '';
+            document.getElementById('edit_description').value = button.getAttribute('data-description') || '';
+
+            // Заполняем специфичные поля в зависимости от вкладки
+            if (currentTab === 'sites' || currentTab === 'typenets' || currentTab === 'firewalls') {
+                document.getElementById('edit_id').value = button.getAttribute('data-otherid') || '';
+            }
+
+            if (currentTab === 'firewalls') {
+                document.getElementById('edit_ngfw').value = button.getAttribute('data-ngfw') || '';
+                document.getElementById('edit_vdom').value = button.getAttribute('data-vdom') || '';
+                document.getElementById('edit_ipv4').value = button.getAttribute('data-ipv4') || '';
+                document.getElementById('edit_apikey').value = button.getAttribute('data-apikey') || '';
+            }
+
+            if (currentTab === 'dns_servers') {
+                document.getElementById('edit_ip').value = button.getAttribute('data-ip') || '';
+                document.getElementById('edit_default').checked = button.getAttribute('data-default') === 'true';
+            }
+        }
+    });
+});
+</script>
+{% endblock %}
