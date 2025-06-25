@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Выполнение сценария{% endblock %}
+
+{% block content %}
+<h2>Выполнение сценария: {{ script.name }}</h2>
+
+{% if error %}
+<div class="alert alert-danger">
+    {{ error }}
+</div>
+{% endif %}
+
+<div class="card mb-3">
+    <div class="card-header">
+        <h5>Информация о сценарии</h5>
+    </div>
+    <div class="card-body">
+        <p><strong>Тип:</strong> {{ script.type }}</p>
+        <p><strong>Описание:</strong> {{ script.description }}</p>
+        <div class="mt-3">
+            <h6>Содержимое сценария:</h6>
+            <pre class="bg-light p-3 rounded"><code>{{ script.content }}</code></pre>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header">
+        <h5>Устройства для выполнения</h5>
+    </div>
+    <div class="card-body">
+        <ul class="list-group">
+            {% for fw in firewalls %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                {{ fw.name }}
+                <span class="badge bg-primary">{{ fw.ipv4 }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h5>Выберите метод аутентификации SSH</h5>
+    </div>
+    <div class="card-body">
+        <ul class="nav nav-tabs mb-3" id="authTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="password-tab" data-bs-toggle="tab" data-bs-target="#password-auth" 
+                        type="button" role="tab" aria-controls="password-auth" aria-selected="true">Пароль</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="key-tab" data-bs-toggle="tab" data-bs-target="#key-auth" 
+                        type="button" role="tab" aria-controls="key-auth" aria-selected="false">SSH ключ</button>
+            </li>
+        </ul>
+        
+        <div class="tab-content" id="authTabsContent">
+            <!-- Аутентификация по паролю -->
+            <div class="tab-pane fade show active" id="password-auth" role="tabpanel" aria-labelledby="password-tab">
+                <form method="POST">
+                    <input type="hidden" name="auth_method" value="password">
+                    
+                    <div class="mb-3">
+                        <label for="ssh_username" class="form-label">Имя пользователя SSH</label>
+                        <input type="text" class="form-control" id="ssh_username" name="ssh_username" 
+                               value="fwGroupSync" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="ssh_password" class="form-label">Пароль SSH</label>
+                        <input type="password" class="form-control" id="ssh_password" name="ssh_password" required>
+                        <div class="form-text">
+                            Пароль используется только для этой сессии и не сохраняется.
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <button type="submit" class="btn btn-primary">Выполнить сценарий</button>
+                        <a href="{{ url_for('show_scripts') }}" class="btn btn-secondary">Отмена</a>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Аутентификация по ключу -->
+            <div class="tab-pane fade" id="key-auth" role="tabpanel" aria-labelledby="key-tab">
+                <form method="POST">
+                    <input type="hidden" name="auth_method" value="key">
+                    
+                    <div class="mb-3">
+                        <label for="ssh_username_key" class="form-label">Имя пользователя SSH</label>
+                        <input type="text" class="form-control" id="ssh_username_key" name="ssh_username" 
+                               value="fwGroupSync" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="ssh_key" class="form-label">Приватный SSH ключ (OpenSSH формат)</label>
+                        <textarea class="form-control font-monospace" id="ssh_key" name="ssh_key" rows="10" required
+                                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----
+...вставьте содержимое вашего приватного ключа...
+-----END OPENSSH PRIVATE KEY-----"></textarea>
+                        <div class="form-text">
+                            Вставьте содержимое вашего приватного ключа SSH в формате OpenSSH. 
+                            Ключ не будет сохранен на сервере после выполнения.
+                            <br>
+                            <strong>Важно:</strong> Если вы используете ключ в формате PuTTY (.ppk),
+                            вам необходимо сначала экспортировать его в формат OpenSSH через PuTTYgen.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <button type="submit" class="btn btn-primary">Выполнить сценарий</button>
+                        <a href="{{ url_for('show_scripts') }}" class="btn btn-secondary">Отмена</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {% if current_date and current_user %}
+        <div class="mt-4 text-muted small">
+            <p>Текущая дата и время (UTC): {{ current_date }}<br>
+            Текущий пользователь: {{ current_user }}</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
