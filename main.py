@@ -1,3 +1,5 @@
+import traceback
+
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
 from pymongo import MongoClient
 from pymongo import ReturnDocument
@@ -14,6 +16,11 @@ from functools import partial
 import pandas as pd
 import os
 from io import BytesIO
+from dotenv import load_dotenv
+import paramiko
+import time
+import re
+import traceback
 
 # 13-05-2025
 
@@ -23,14 +30,22 @@ import dns.reversename
 import dns.query
 # DNS RESOLVE <<<
 
+# CRYPTO >>>
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import base64
+# CRYPTO <<<
+
 from concurrent.futures import ThreadPoolExecutor
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-
+load_dotenv()
 app = Flask(__name__)
-app.secret_key = 'your_secret_key_here'
+SECRET_KEY = os.environ.get('SECRET_KEY')
+app.config['SECRET_KEY'] = SECRET_KEY
 
 
 
@@ -46,6 +61,8 @@ sites = db.sites
 typeNets = db.typeNets
 firewalls = db.firewalls
 state = db.state
+scripts = db.scripts
+script_runs = db.script_runs
 
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>> DNS RESOLVE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -69,6 +86,101 @@ if state.count_documents({"param_name": "sync_fg"}) == 0:
     state.insert_one(
         {"param_name": "sync_fg",
          "value": False})
+
+
+def generate_key_from_secret(secret_key: str, salt: bytes = None) -> bytes:
+    """
+    Генерирует ключ шифрования из secret_key с использованием PBKDF2
+
+    Args:
+        secret_key (str): Секретный ключ для генерации
+        salt (bytes): Соль для усиления безопасности (если None, генерируется случайно)
+
+    Returns:
+        bytes: Ключ для шифрования
+    """
+    if salt is None:
+        salt = os.urandom(16)  # 16 байт случайной соли
+
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,  # Количество итераций для усиления безопасности
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(secret_key.encode()))
+    return key, salt
+
+
+def encrypt_password(password: str, secret_key: str) -> str:
+    """
+    Шифрует пароль с использованием симметричного шифрования
+
+    Args:
+        password (str): Пароль для шифрования
+        secret_key (str): Секретный ключ для шифрования
+
+    Returns:
+        str: Зашифрованный пароль в формате base64 (включает соль)
+    """
+    # Генерируем ключ и соль
+    key, salt = generate_key_from_secret(secret_key)
+
+    # Создаем объект Fernet для шифрования
+    f = Fernet(key)
+
+    # Шифруем пароль
+    encrypted_password = f.encrypt(password.encode())
+
+    # Объединяем соль и зашифрованный пароль
+    # Первые 16 байт - соль, остальное - зашифрованный пароль
+    combined = salt + encrypted_password
+
+    # Кодируем в base64 для удобного хранения
+    return base64.urlsafe_b64encode(combined).decode()
+
+
+def decrypt_password(encrypted_password: str, secret_key: str) -> str:
+    """
+    Расшифровывает пароль
+
+    Args:
+        encrypted_password (str): Зашифрованный пароль в формате base64
+        secret_key (str): Секретный ключ для расшифровки
+
+    Returns:
+        str: Расшифрованный пароль
+
+    Raises:
+        Exception: Если не удается расшифровать (неверный ключ или поврежденные данные)
+    """
+    try:
+        # Декодируем из base64
+        combined = base64.urlsafe_b64decode(encrypted_password.encode())
+
+        # Извлекаем соль (первые 16 байт) и зашифрованные данные
+        salt = combined[:16]
+        encrypted_data = combined[16:]
+
+        # Генерируем ключ с использованием той же соли
+        key, _ = generate_key_from_secret(secret_key, salt)
+
+        # Создаем объект Fernet для расшифровки
+        f = Fernet(key)
+
+        # Расшифровываем пароль
+        decrypted_password = f.decrypt(encrypted_data)
+
+        return decrypted_password.decode()
+
+    except Exception as e:
+        raise Exception(f"Ошибка расшифровки: {str(e)}")
+
+
+
+
+
+
 
 
 
@@ -205,7 +317,7 @@ def is_group_exists(fw_name, group_name):
 
         # 3. Подготовка заголовков и параметров
         headers = {
-            "Authorization": f"Bearer {firewall['apikey']}",
+            "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
             "Content-Type": "application/json"
         }
         params = {"vdom": firewall['VDOM']}
@@ -256,7 +368,7 @@ def group_members(fw_name, group_name):
 
         # 3. Подготовка заголовков и параметров
         headers = {
-            "Authorization": f"Bearer {firewall['apikey']}",
+            "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
             "Content-Type": "application/json"
         }
         params = {"vdom": firewall['VDOM']}
@@ -415,7 +527,7 @@ def createFortigateAddress(_firewall):
                 FORTIGATE_BASE_URL = f"https://{firewall['ipv4']}/api/v2"
 
             FORTIGATE_API_HEADERS = {
-                "Authorization": f"Bearer {firewall['apikey']}",
+                "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
                 "Content-Type": "application/json"
             }
             FORTIGATE_API_PARAMS = {
@@ -532,7 +644,7 @@ def create_fortigate_group(firewall, group_name, members, exist_members):
             base_url = f"https://{firewall['ipv4']}/api/v2"
 
         headers = {
-            "Authorization": f"Bearer {firewall['apikey']}",
+            "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
             "Content-Type": "application/json"
         }
         params = {"vdom": firewall['VDOM']}
@@ -600,7 +712,7 @@ def create_fortigate_service(firewall, service_name, protocol, port_start, port_
             base_url = f"https://{firewall['ipv4']}/api/v2"
 
         headers = {
-            "Authorization": f"Bearer {firewall['apikey']}",
+            "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
             "Content-Type": "application/json"
         }
         params = {"vdom": firewall['VDOM']}
@@ -665,7 +777,7 @@ def create_fortigate_service_group(firewall, group_name, members, exist_members=
             base_url = f"https://{firewall['ipv4']}/api/v2"
 
         headers = {
-            "Authorization": f"Bearer {firewall['apikey']}",
+            "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
             "Content-Type": "application/json"
         }
         params = {"vdom": firewall['VDOM']}
@@ -740,8 +852,10 @@ def create_fortigate_policy(firewall, policy_data):
             print(f"https protocol")
             base_url = f"https://{firewall['ipv4']}/api/v2"
 
+
+
         headers = {
-            "Authorization": f"Bearer {firewall['apikey']}",
+            "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
             "Content-Type": "application/json"
         }
         params = {"vdom": firewall['VDOM']}
@@ -1053,8 +1167,12 @@ def show_nets():
             # Если введена некорректная сеть, добавим сообщение об ошибке
             flash('Некорректный формат сети. Используйте формат IP/маска, например: 192.168.1.0/24', 'danger')
 
+    # Получаем список межсетевых экранов
+    firewall_list = list(firewalls.find())
+
     return render_template('nets.html',
                            nets=network_list,
+                           firewalls=firewall_list,  # Добавляем список МЭ
                            filter_value=filter_name,
                            network_filter_value=network_filter,
                            search_direction=search_direction,
@@ -1084,7 +1202,7 @@ def show_groups():
                 FORTIGATE_BASE_URL = f"https://{firewall['ipv4']}/api/v2"
 
             FORTIGATE_API_HEADERS = {
-                "Authorization": f"Bearer {firewall['apikey']}",
+                "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
                 "Content-Type": "application/json"
             }
             FORTIGATE_API_PARAMS = {
@@ -1144,7 +1262,7 @@ def check_group_inclusion_in_fortigate(group_name):
                 FORTIGATE_BASE_URL = f"https://{fw['ipv4']}/api/v2"
 
             FORTIGATE_API_HEADERS = {
-                "Authorization": f"Bearer {fw['apikey']}",
+                "Authorization": f"Bearer {decrypt_password(fw['apikey'], app.config['SECRET_KEY'])}",
                 "Content-Type": "application/json"
             }
             FORTIGATE_API_PARAMS = {"vdom": fw['VDOM']}
@@ -1198,7 +1316,7 @@ def check_group_usage_in_rules(group_name):
                 FORTIGATE_BASE_URL = f"https://{fw['ipv4']}/api/v2"
 
             FORTIGATE_API_HEADERS = {
-                "Authorization": f"Bearer {fw['apikey']}",
+                "Authorization": f"Bearer {decrypt_password(fw['apikey'], app.config['SECRET_KEY'])}",
                 "Content-Type": "application/json"
             }
             FORTIGATE_API_PARAMS = {"vdom": fw['VDOM']}
@@ -1245,7 +1363,7 @@ def sync_address_to_fortigate(net_data, firewall):
             FORTIGATE_BASE_URL = f"https://{firewall['ipv4']}/api/v2"
 
         FORTIGATE_API_HEADERS = {
-            "Authorization": f"Bearer {firewall['apikey']}",
+            "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
             "Content-Type": "application/json"
         }
         FORTIGATE_API_PARAMS = {"vdom": firewall['VDOM']}
@@ -1299,7 +1417,7 @@ def sync_group_to_fortigate(group_name, desired_members, firewall):
             FORTIGATE_BASE_URL = f"https://{firewall['ipv4']}/api/v2"
 
         FORTIGATE_API_HEADERS = {
-            "Authorization": f"Bearer {firewall['apikey']}",
+            "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
             "Content-Type": "application/json"
         }
         FORTIGATE_API_PARAMS = {"vdom": firewall['VDOM']}
@@ -1424,7 +1542,7 @@ def full_sync_with_fortigate():
                 FORTIGATE_BASE_URL = f"https://{fw['ipv4']}/api/v2"
 
             FORTIGATE_API_HEADERS = {
-                "Authorization": f"Bearer {fw['apikey']}",
+                "Authorization": f"Bearer {decrypt_password(fw['apikey'], app.config['SECRET_KEY'])}",
                 "Content-Type": "application/json"
             }
             FORTIGATE_API_PARAMS = {"vdom": fw['VDOM']}
@@ -1622,7 +1740,7 @@ def delete_group(group_name):
                     FORTIGATE_BASE_URL = f"https://{firewall['ipv4']}/api/v2"
 
                 FORTIGATE_API_HEADERS = {
-                    "Authorization": f"Bearer {firewall['apikey']}",
+                    "Authorization": f"Bearer {decrypt_password(firewall['apikey'], app.config['SECRET_KEY'])}",
                     "Content-Type": "application/json"
                 }
                 FORTIGATE_API_PARAMS = {"vdom": firewall['VDOM']}
@@ -1718,25 +1836,37 @@ def delete_net(net_id):
     return redirect(url_for('show_nets'))
 
 
-
-@app.route('/edit_net/<net_id>', methods=['POST'])
-def edit_net(net_id):
+@app.route('/set_firewall/<net_id>', methods=['POST'])
+def set_firewall(net_id):
     if 'username' not in session:
         return redirect(url_for('login'))
 
     try:
-        # Находим сеть для редактирования
-        net = nets.find_one({"_id": ObjectId(net_id)})
-        if not net:
-            flash('Сеть не найдена', 'danger')
-            return redirect(url_for('show_nets'))
+        firewall_name = request.form.get('firewall_name', '')
 
-        net_name = net['name']
+        # Обновляем сеть в базе данных
+        result = nets.update_one(
+            {"_id": ObjectId(net_id)},
+            {"$set": {"fw": firewall_name}}
+        )
+
+        if result.modified_count > 0:
+            # Получаем имя сети для сообщения
+            net = nets.find_one({"_id": ObjectId(net_id)})
+            net_name = net['name'] if net else 'Unknown'
+
+            if firewall_name:
+                flash(f'Межсетевой экран "{firewall_name}" назначен для сети "{net_name}"', 'success')
+            else:
+                flash(f'Межсетевой экран удален для сети "{net_name}"', 'success')
+        else:
+            flash('Ошибка при обновлении сети', 'danger')
 
     except Exception as e:
-        flash(f'Ошибка при изменении сети: {str(e)}', 'danger')
+        flash(f'Ошибка при назначении межсетевого экрана: {str(e)}', 'danger')
 
     return redirect(url_for('show_nets'))
+
 
 def sync_all_affected_groups(net_name):
     """Синхронизирует все группы, содержавшие удаленную сеть"""
@@ -2099,19 +2229,6 @@ def upload_excel():
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
     if 'username' not in session:
@@ -2163,11 +2280,18 @@ def settings():
                 firewalls.delete_one({"_id": ObjectId(request.form['delete_id'])})
                 flash('Firewall deleted successfully!', 'success')
             else:
+
+                if  len(str(request.form['apikey'])) > 35: # косвенный признак что в поле уже хэш а не токен
+                    apikey = request.form['apikey']
+                else:
+                    apikey = encrypt_password(request.form['apikey'], app.config['SECRET_KEY'])
+
                 firewall_data = {
                     "NameNGFW": request.form['NameNGFW'],
                     "VDOM": request.form['VDOM'],
                     "ipv4": request.form['ipv4'],
-                    "apikey": request.form['apikey'],
+                    #"apikey": request.form['apikey'],
+                    "apikey": apikey,
                     "description": request.form['description'],
                     "name": request.form['name'],
                     "id": request.form['id']
@@ -2225,5 +2349,498 @@ def settings():
                            dns_servers=dns_servers_list)
 
 
+@app.route('/scripts')
+def show_scripts():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    # Получаем все сценарии из базы данных
+    script_list = list(scripts.find())
+
+    return render_template('scripts.html', scripts=script_list)
+
+
+@app.route('/scripts/create', methods=['GET', 'POST'])
+def create_script():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    # Получаем список всех межсетевых экранов
+    firewall_list = list(firewalls.find())
+
+    if request.method == 'POST':
+        # Получаем данные из формы
+        name = request.form.get('name')
+        type = request.form.get('type')
+        description = request.form.get('description', '')
+        content = request.form.get('content', '')
+        selected_firewalls = request.form.getlist('firewalls')
+
+        # Создаем новый сценарий
+        new_script = {
+            "name": name,
+            "type": type,
+            "description": description,
+            "content": content,
+            "firewalls": selected_firewalls,
+            "created_by": session['username'],
+            "created_at": datetime.now()
+        }
+
+        # Сохраняем в базу данных
+        scripts.insert_one(new_script)
+
+        flash('Сценарий успешно создан', 'success')
+        return redirect(url_for('show_scripts'))
+
+    # GET запрос - отображаем форму создания
+    return render_template('script_edit.html', script=None, firewalls=firewall_list)
+
+
+@app.route('/scripts/edit/<script_id>', methods=['GET', 'POST'])
+def edit_script(script_id):
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    # Находим сценарий по ID
+    script = scripts.find_one({"_id": ObjectId(script_id)})
+    if not script:
+        flash('Сценарий не найден', 'danger')
+        return redirect(url_for('show_scripts'))
+
+    # Получаем список всех межсетевых экранов
+    firewall_list = list(firewalls.find())
+
+    if request.method == 'POST':
+        # Получаем данные из формы
+        name = request.form.get('name')
+        type = request.form.get('type')
+        description = request.form.get('description', '')
+        content = request.form.get('content', '')
+        selected_firewalls = request.form.getlist('firewalls')
+
+        # Обновляем сценарий
+        scripts.update_one(
+            {"_id": ObjectId(script_id)},
+            {"$set": {
+                "name": name,
+                "type": type,
+                "description": description,
+                "content": content,
+                "firewalls": selected_firewalls,
+                "updated_by": session['username'],
+                "updated_at": datetime.now()
+            }}
+        )
+
+        flash('Сценарий успешно обновлен', 'success')
+        return redirect(url_for('show_scripts'))
+
+    # GET запрос - отображаем форму редактирования
+    return render_template('script_edit.html', script=script, firewalls=firewall_list)
+
+
+@app.route('/scripts/delete/<script_id>', methods=['POST'])
+def delete_script(script_id):
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    # Удаляем сценарий
+    result = scripts.delete_one({"_id": ObjectId(script_id)})
+
+    if result.deleted_count > 0:
+        flash('Сценарий успешно удален', 'success')
+    else:
+        flash('Сценарий не найден', 'danger')
+
+    return redirect(url_for('show_scripts'))
+
+
+@app.route('/scripts/run/<script_id>', methods=['GET', 'POST'])
+def run_script(script_id):
+    if 'username' not in session:
+        return redirect(url_for('login'))
+
+    # Находим сценарий по ID
+    script = scripts.find_one({"_id": ObjectId(script_id)})
+    if not script:
+        flash('Сценарий не найден', 'danger')
+        return redirect(url_for('show_scripts'))
+
+    # Получаем список выбранных межсетевых экранов
+    selected_fw_ids = script['firewalls']
+    selected_firewalls = list(firewalls.find({"_id": {"$in": [ObjectId(fw_id) for fw_id in selected_fw_ids]}}))
+
+    # Обработка формы с вводом метода аутентификации
+    if request.method == 'POST':
+        # Выбираем способ аутентификации
+        auth_method = request.form.get('auth_method', 'password')
+
+        if auth_method == 'key' and 'ssh_key' in request.form:
+            # Получаем SSH ключ из формы
+            ssh_key_content = request.form['ssh_key']
+            ssh_username = request.form.get('ssh_username', 'fwGroupSync')
+
+            # Создаем временный файл для хранения ключа
+            import tempfile
+            import platform
+            import subprocess
+            import stat  # Для работы с правами доступа в Unix
+
+            # Создаем временный файл с приватным ключом
+            try:
+                # Создаем временный файл, который не будет автоматически удален
+                fd, temp_key_path = tempfile.mkstemp(suffix='.key')
+                os.close(fd)  # Закрываем файловый дескриптор
+
+                # Записываем содержимое ключа в файл
+                with open(temp_key_path, 'w') as key_file:
+                    key_file.write(ssh_key_content)
+
+                # Устанавливаем правильные права доступа для приватного ключа
+                # В зависимости от операционной системы
+                if platform.system() == 'Windows':
+                    # В Windows используем icacls для установки прав
+                    try:
+                        app.logger.debug(f"Setting Windows permissions for key file: {temp_key_path}")
+                        # Удаляем наследуемые разрешения и устанавливаем только для текущего пользователя
+                        subprocess.run(['icacls', temp_key_path, '/inheritance:r'], check=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        subprocess.run(['icacls', temp_key_path, '/grant:r', f'%USERNAME%:R'], check=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    except subprocess.SubprocessError as perm_error:
+                        app.logger.error(f"Failed to set Windows permissions: {str(perm_error)}")
+                        return render_template('script_auth_prompt.html', script=script, firewalls=selected_firewalls,
+                                               error=f"Не удалось установить права доступа на ключ: {str(perm_error)}")
+                else:
+                    # В Unix системах используем chmod 600
+                    app.logger.debug(f"Setting Unix permissions for key file: {temp_key_path}")
+                    os.chmod(temp_key_path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600 в восьмеричной системе
+
+                # Выполняем команды на каждом межсетевом экране
+                results = {}
+                for fw in selected_firewalls:
+                    try:
+                        host = fw['ipv4']
+                        vdom = fw['VDOM']
+                        username = ssh_username
+
+                        # Разбиваем содержимое сценария на отдельные команды
+                        commands = [cmd.strip() for cmd in script['content'].split('\n') if cmd.strip()]
+
+                        # Выполняем команды через SSH с временным ключом
+                        app.logger.debug(f"Executing SSH commands with key authentication for {host}")
+                        success, output = execute_ssh_commands(host, username, temp_key_path, vdom, commands)
+
+                        # Извлекаем IP-адреса из вывода
+                        ip_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+                        ips = list(set(ip_pattern.findall(output)))
+
+                        # Сохраняем результат
+                        results[fw['name']] = {
+                            "success": success,
+                            "output": output,
+                            "commands": commands,
+                            "extracted_ips": ips,
+                            "fw_details": {
+                                "host": host,
+                                "vdom": vdom,
+                                "username": username
+                            }
+                        }
+
+                    except Exception as e:
+                        app.logger.error(f"Error executing commands on {fw.get('name', 'unknown')}: {str(e)}")
+                        results[fw['name']] = {
+                            "success": False,
+                            "error": str(e),
+                            "traceback": traceback.format_exc()
+                        }
+
+            finally:
+                # Удаляем временный файл с ключом после использования
+                try:
+                    if os.path.exists(temp_key_path):
+                        os.unlink(temp_key_path)
+                        app.logger.debug(f"Temporary key file deleted: {temp_key_path}")
+                except Exception as del_error:
+                    app.logger.warning(f"Failed to delete temporary key file: {str(del_error)}")
+
+        elif auth_method == 'password' and 'ssh_password' in request.form:
+            # Используем аутентификацию по паролю
+            ssh_password = request.form['ssh_password']
+            ssh_username = request.form.get('ssh_username', 'fwGroupSync')
+
+            # Код для выполнения через аутентификацию по паролю
+            results = {}
+            for fw in selected_firewalls:
+                try:
+                    host = fw['ipv4']
+                    vdom = fw['VDOM']
+
+                    # Разбиваем содержимое сценария на отдельные команды
+                    commands = [cmd.strip() for cmd in script['content'].split('\n') if cmd.strip()]
+
+                    # Выполняем команды через SSH с паролем
+                    app.logger.debug(f"Executing SSH commands with password authentication for {host}")
+                    success, output = execute_ssh_commands_with_password(host, ssh_username, ssh_password, vdom,
+                                                                         commands)
+
+                    # Извлекаем IP-адреса из вывода
+                    ip_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+                    ips = list(set(ip_pattern.findall(output)))
+
+                    # Сохраняем результат
+                    results[fw['name']] = {
+                        "success": success,
+                        "output": output,
+                        "commands": commands,
+                        "extracted_ips": ips,
+                        "fw_details": {
+                            "host": host,
+                            "vdom": vdom,
+                            "username": ssh_username
+                        }
+                    }
+
+                except Exception as e:
+                    app.logger.error(f"Error executing commands on {fw.get('name', 'unknown')}: {str(e)}")
+                    results[fw['name']] = {
+                        "success": False,
+                        "error": str(e),
+                        "traceback": traceback.format_exc()
+                    }
+        else:
+            # Если не выбран метод аутентификации, показываем ошибку
+            return render_template('script_auth_prompt.html', script=script, firewalls=selected_firewalls,
+                                   error="Выберите метод аутентификации")
+
+        # Записываем результаты выполнения
+        script_run = {
+            "script_id": ObjectId(script_id),
+            "script_name": script['name'],
+            "run_by": session['username'],
+            "run_at": datetime.now(),
+            "results": results
+        }
+
+        # Сохраняем историю выполнения
+        script_runs.insert_one(script_run)
+
+        # Возвращаем результаты
+        return render_template('script_results.html', script=script, results=results, firewalls=selected_firewalls)
+
+    # Если метод GET, показываем форму для выбора метода аутентификации
+    current_date = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    return render_template('script_auth_prompt.html', script=script, firewalls=selected_firewalls,
+                           current_date=current_date, current_user=session.get('username', 'Guest'))
+
+
+def execute_ssh_commands_with_password(host, username, password, vdom, commands):
+    """
+    Выполняет список CLI команд на FortiGate через SSH с использованием аутентификации по паролю
+    Работает как в Windows, так и в Linux
+    """
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        app.logger.debug(f"Connecting to {host} as {username} using password authentication")
+
+        # Подключение к устройству с использованием пароля
+        ssh.connect(host, username=username, password=password, timeout=10, look_for_keys=False, allow_agent=False)
+        app.logger.debug("SSH connection established")
+
+        # Открываем интерактивную сессию
+        ssh_shell = ssh.invoke_shell()
+        app.logger.debug("Interactive shell created")
+
+        # Даем время на инициализацию shell
+        time.sleep(1)
+        output = ssh_shell.recv(10000).decode('utf-8', errors='ignore')
+
+        # Переходим в нужный VDOM
+        app.logger.debug(f"Navigating to VDOM: {vdom}")
+        ssh_shell.send(f"config vdom\n")
+        time.sleep(0.5)
+        ssh_shell.send(f"edit {vdom}\n")
+        time.sleep(0.5)
+
+        # Читаем выходные данные для очистки буфера
+        output = ssh_shell.recv(10000).decode('utf-8', errors='ignore')
+
+        # Полный результат выполнения
+        full_output = output
+
+        # Выполняем каждую команду
+        app.logger.debug(f"Executing {len(commands)} commands")
+        for command in commands:
+            if not command.strip():
+                continue
+
+            # Отправляем команду
+            app.logger.debug(f"Executing command: {command}")
+            ssh_shell.send(f"{command}\n")
+
+            # Даем время на выполнение (особенно для сложных команд)
+            time.sleep(1)
+
+            # Читаем вывод
+            while ssh_shell.recv_ready():
+                chunk = ssh_shell.recv(10000).decode('utf-8', errors='ignore')
+                full_output += chunk
+                # Небольшая задержка перед следующим чтением
+                time.sleep(0.1)
+
+        # Выходим из VDOM и закрываем сессию
+        app.logger.debug("Exiting VDOM and shell")
+        ssh_shell.send("end\n")
+        time.sleep(0.5)
+        ssh_shell.send("exit\n")
+        time.sleep(0.5)
+
+        # Читаем финальный вывод
+        while ssh_shell.recv_ready():
+            chunk = ssh_shell.recv(10000).decode('utf-8', errors='ignore')
+            full_output += chunk
+            time.sleep(0.1)
+
+        # Закрываем соединение
+        ssh.close()
+        app.logger.debug("SSH connection closed")
+
+        return True, full_output
+
+    except paramiko.ssh_exception.AuthenticationException as auth_error:
+        app.logger.error(f"Authentication error: {str(auth_error)}")
+        return False, f"Ошибка аутентификации SSH: {str(auth_error)}. Проверьте имя пользователя или пароль."
+    except paramiko.ssh_exception.NoValidConnectionsError as conn_error:
+        app.logger.error(f"Connection error: {str(conn_error)}")
+        return False, f"Не удалось подключиться к {host}. Проверьте доступность устройства и настройки брандмауэра."
+    except Exception as e:
+        app.logger.error(f"General error: {str(e)}")
+        error_msg = f"Ошибка SSH: {str(e)}\n{traceback.format_exc()}"
+        return False, error_msg
+
+
+def execute_ssh_commands(host, username, private_key_path, vdom, commands):
+    """
+    Выполняет список CLI команд на FortiGate через SSH с использованием ключевой аутентификации
+    Работает как в Windows, так и в Linux
+    """
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        app.logger.debug(f"Connecting to {host} as {username} using key: {private_key_path}")
+
+        # Проверяем существование и доступность файла с ключом
+        if not os.path.isfile(private_key_path):
+            app.logger.error(f"Private key file does not exist: {private_key_path}")
+            return False, f"Файл с приватным ключом не существует: {private_key_path}"
+
+        # Проверяем права доступа к файлу
+        try:
+            # В Unix проверяем права доступа
+            if os.name == 'posix':
+                mode = os.stat(private_key_path).st_mode
+                if (mode & 0o077) != 0:
+                    app.logger.warning(f"Insecure permissions on key file: {private_key_path}")
+        except Exception as perm_error:
+            app.logger.warning(f"Could not check file permissions: {str(perm_error)}")
+
+        # Загружаем приватный ключ
+        try:
+            app.logger.debug("Loading private key...")
+            private_key = paramiko.RSAKey.from_private_key_file(private_key_path)
+            app.logger.debug("Private key loaded successfully")
+        except paramiko.ssh_exception.PasswordRequiredException:
+            app.logger.error("Private key requires password")
+            return False, "Ошибка: приватный ключ защищен паролем. Используйте незащищенный ключ."
+        except Exception as key_error:
+            app.logger.error(f"Failed to load private key: {str(key_error)}")
+            return False, f"Ошибка загрузки приватного ключа: {str(key_error)}"
+
+        # Подключение к устройству с использованием ключа
+        try:
+            app.logger.debug("Attempting SSH connection...")
+            ssh.connect(host, username=username, pkey=private_key, timeout=10,
+                        look_for_keys=False, allow_agent=False)
+            app.logger.debug("SSH connection established")
+        except Exception as conn_error:
+            app.logger.error(f"SSH connection error: {str(conn_error)}")
+            return False, f"Ошибка подключения SSH: {str(conn_error)}"
+
+        # Открываем интерактивную сессию
+        ssh_shell = ssh.invoke_shell()
+        app.logger.debug("Interactive shell created")
+
+        # Даем время на инициализацию shell
+        time.sleep(1)
+        output = ssh_shell.recv(10000).decode('utf-8', errors='ignore')
+
+        # Переходим в нужный VDOM
+        app.logger.debug(f"Navigating to VDOM: {vdom}")
+        ssh_shell.send(f"config vdom\n")
+        time.sleep(0.5)
+        ssh_shell.send(f"edit {vdom}\n")
+        time.sleep(0.5)
+
+        # Читаем выходные данные для очистки буфера
+        output = ssh_shell.recv(10000).decode('utf-8', errors='ignore')
+
+        # Полный результат выполнения
+        full_output = output
+
+        # Выполняем каждую команду
+        app.logger.debug(f"Executing {len(commands)} commands")
+        for command in commands:
+            if not command.strip():
+                continue
+
+            # Отправляем команду
+            app.logger.debug(f"Executing command: {command}")
+            ssh_shell.send(f"{command}\n")
+
+            # Даем время на выполнение (особенно для сложных команд)
+            time.sleep(1)
+
+            # Читаем вывод
+            while ssh_shell.recv_ready():
+                chunk = ssh_shell.recv(10000).decode('utf-8', errors='ignore')
+                full_output += chunk
+                # Небольшая задержка перед следующим чтением
+                time.sleep(0.1)
+
+        # Выходим из VDOM и закрываем сессию
+        app.logger.debug("Exiting VDOM and shell")
+        ssh_shell.send("end\n")
+        time.sleep(0.5)
+        ssh_shell.send("exit\n")
+        time.sleep(0.5)
+
+        # Читаем финальный вывод
+        while ssh_shell.recv_ready():
+            chunk = ssh_shell.recv(10000).decode('utf-8', errors='ignore')
+            full_output += chunk
+            time.sleep(0.1)
+
+        # Закрываем соединение
+        ssh.close()
+        app.logger.debug("SSH connection closed")
+
+        return True, full_output
+
+    except paramiko.ssh_exception.AuthenticationException as auth_error:
+        app.logger.error(f"Authentication error: {str(auth_error)}")
+        return False, f"Ошибка аутентификации SSH: {str(auth_error)}. Проверьте имя пользователя или приватный ключ."
+    except paramiko.ssh_exception.NoValidConnectionsError as conn_error:
+        app.logger.error(f"Connection error: {str(conn_error)}")
+        return False, f"Не удалось подключиться к {host}. Проверьте доступность устройства и настройки брандмауэра."
+    except Exception as e:
+        app.logger.error(f"General error: {str(e)}")
+        error_msg = f"Ошибка SSH: {str(e)}\n{traceback.format_exc()}"
+        return False, error_msg
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False, use_reloader=False)
